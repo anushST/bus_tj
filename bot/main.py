@@ -15,9 +15,9 @@ from telegram.ext import (CallbackQueryHandler, CommandHandler, Filters,
 load_dotenv()
 
 TELEGRAM_TOKEN: str = getenv('TELEGRAM_BOT_TOKEN')
-LOCATION_DISTANCE_URL: str = 'http://127.0.0.1:8000/api/location/'
-STOP_URL: str = 'http://127.0.0.1:8000/api/stop/'
-BUSES_URL: str = 'http://127.0.0.1:8000/api/bus/'
+LOCATION_DISTANCE_URL: str = 'http://bustj.pythonanywhere.com/api/location/'
+STOP_URL: str = 'http://bustj.pythonanywhere.com/api/stop/'
+BUSES_URL: str = 'http://bustj.pythonanywhere.com/api/bus/'
 
 logger: logging.Logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
