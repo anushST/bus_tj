@@ -1,27 +1,30 @@
 """Telegram bot script."""
 import logging
-import requests
 from logging.handlers import RotatingFileHandler
 from os import getenv
-from dotenv import load_dotenv
+
+import requests
 from bot_exceptions import TokenError
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from dotenv import load_dotenv
+from telegram import (InlineKeyboardButton, InlineKeyboardMarkup,
+                      KeyboardButton, ReplyKeyboardMarkup)
 from telegram.error import BadRequest
-from telegram.ext import (
-    CallbackQueryHandler, CommandHandler, Filters, MessageHandler, Updater)
+from telegram.ext import (CallbackQueryHandler, CommandHandler, Filters,
+                          MessageHandler, Updater)
 
 load_dotenv()
 
 TELEGRAM_TOKEN: str = getenv('TELEGRAM_BOT_TOKEN')
-LOCATION_DISTANCE_URL = 'http://127.0.0.1:8000/api/location/'
-NEAR_STOP_URL = 'http://127.0.0.1:8000/api/stop/'
-BUSES_LIST_URL = 'http://127.0.0.1:8000/api/bus/'
+LOCATION_DISTANCE_URL: str = 'http://127.0.0.1:8000/api/location/'
+STOP_URL: str = 'http://127.0.0.1:8000/api/stop/'
+BUSES_URL: str = 'http://127.0.0.1:8000/api/bus/'
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
-formater = logging.Formatter('%(asctime)s %(levelname)s %(message)s '
-                             '(def %(funcName)s:%(lineno)d)')
-handler = RotatingFileHandler('my_looger.log', maxBytes=5000000, backupCount=5)
+formater: logging.Formatter = logging.Formatter(
+    '%(asctime)s %(levelname)s %(message)s (def %(funcName)s:%(lineno)d)')
+handler: RotatingFileHandler = RotatingFileHandler(
+    'my_looger.log', maxBytes=5000000, backupCount=5)
 handler.setFormatter(formater)
 logger.addHandler(logger)
 
@@ -86,55 +89,82 @@ def start(update, context) -> None:
     """Register user and send stop decision."""
     try:
         chat_id = update.effective_chat.id
-        users[f'{chat_id}'] = {'message_sent': False}
+        users[f'{chat_id}'] = {}
         send_stop_decisions(update, context)
+        delete_message(update, context, update.message.message_id)
     except Exception:
         pass
 
 
 def send_stop_decisions(update, context) -> None:
     """Send decision: 4 near stops or input stop id."""
-    try:
-        chat_id = update.effective_chat.id
-        users[f'{chat_id}']['action'] = 'choose_way'
-        keyboard = [[InlineKeyboardButton(
-            'Найти ближайшие', callback_data='send_near_stations')]]
-        markup = InlineKeyboardMarkup(keyboard)
-        if not users[f'{chat_id}']['message_sent']:
-            with open('bot/_7f60c46f-a38b-4eb3-8ad6'
-                      '-7175790b244d.jpeg', 'rb') as photo:
-                message = context.bot.send_photo(
-                    chat_id,
-                    photo,
-                    caption='Напишите id остановки',
-                    reply_markup=markup,
-                    parse_mode='HTML')
-            users[f'{chat_id}']['main_message_id'] = message.message_id
-            users[f'{chat_id}']['message_sent'] = True
-            delete_message(update, context, message.message_id-1)
-        else:
-            edit_message_caption(update, context, 'Напишите id остановки')
-            edit_message_reply_markup(update, context, markup)
-    except Exception:
-        pass
+    chat_id = update.effective_chat.id
+    users[f'{chat_id}']['action'] = 'choose_way'
+    """
+    keyboard = [[InlineKeyboardButton(
+        'Найти ближайшие', callback_data='choose'
+    )]]
+    markup = InlineKeyboardMarkup(keyboard)
+    """
+    keyboard = [[KeyboardButton(
+        'Найти ближайшие', request_location=True)]]
+    markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True,
+                                 one_time_keyboard=True)
+
+    with open('bot/logo.jpeg', 'rb') as photo:
+        message = context.bot.send_photo(
+            chat_id,
+            photo,
+            caption='Напишите id остановки',
+            reply_markup=markup,
+            parse_mode='HTML')
+        try:
+            delete_message(
+                update, context, users[f'{chat_id}']['main_message_id'])
+        except KeyError:
+            pass
+        users[f'{chat_id}']['main_message_id'] = message.message_id
+
+
+def station_by_location(update, context):
+    """Delete location message."""
+    delete_message(update, context, update.message.message_id)
+    send_near_stations(update, context)
 
 
 def send_near_stations(update, context):
     """Send near stations choose-buttons."""
     chat_id = update.effective_chat.id
     users[f'{chat_id}']['action'] = 'choose_stop'
+    users[f'{chat_id}']['way'] = 'near'
     keyboard = [[]]
-    params = {'latitude': 38.573739, 'longitude': 68.78696}
-    data = requests.get(NEAR_STOP_URL, params=params).json()
+    try:
+        location = update.message.location
+        users[f'{chat_id}']['latitude'] = location.latitude
+        users[f'{chat_id}']['longitude'] = location.longitude
+        params = {'latitude': location.latitude,
+                  'longitude': location.longitude}
+        data = requests.get(STOP_URL, params=params).json()
+    except AttributeError:
+        params = {'latitude': users[f'{chat_id}']['latitude'],
+                  'longitude': users[f'{chat_id}']['longitude']}
+        data = requests.get(STOP_URL, params=params).json()
     for stop in data['stops']:
         keyboard.append([InlineKeyboardButton(
-            f'{stop[0]} - Исмоили сомони', callback_data=f'stop {stop[1]}'
+            f'{stop[1]} - {stop[0]}', callback_data=f'stop {stop[1]}'
         )])
     keyboard.append([InlineKeyboardButton(
         '◀️ Назад', callback_data='back')])
     markup = InlineKeyboardMarkup(keyboard)
-    edit_message_caption(update, context, 'Ближайшие остановки:')
-    edit_message_reply_markup(update, context, markup)
+    with open('bot/logo.jpeg', 'rb') as photo:
+        message = context.bot.send_photo(
+            chat_id,
+            photo,
+            caption='Напишите id остановки',
+            reply_markup=markup,
+            parse_mode='HTML')
+        delete_message(update, context, users[f'{chat_id}']['main_message_id'])
+        users[f'{chat_id}']['main_message_id'] = message.message_id
 
 
 def send_buses(update, context):
@@ -143,7 +173,7 @@ def send_buses(update, context):
     users[f'{chat_id}']['action'] = 'choose_buses'
     keyboard = [[]]
     params = {'stop': users[f'{chat_id}']['stop']}
-    data = requests.get(BUSES_LIST_URL, params=params).json()
+    data = requests.get(BUSES_URL, params=params).json()
     for bus in data['buses']:
         keyboard[0].append(InlineKeyboardButton(
             f'{bus[0]}', callback_data=f'bus {bus[1]}'
@@ -151,20 +181,35 @@ def send_buses(update, context):
     keyboard.append([InlineKeyboardButton(
         '◀️ Назад', callback_data='back')])
     markup = InlineKeyboardMarkup(keyboard)
-    edit_message_caption(update, context, 'Выберите нужный вам автобус')
-    edit_message_reply_markup(update, context, markup)
+    if users[f'{chat_id}'].get('is_input', False):
+        with open('bot/logo.jpeg', 'rb') as photo:
+            message = context.bot.send_photo(
+                chat_id,
+                photo,
+                caption='Выберите нужный вам автобус',
+                reply_markup=markup,
+                parse_mode='HTML')
+        delete_message(update, context, users[f'{chat_id}']['main_message_id'])
+        users[f'{chat_id}']['main_message_id'] = message.message_id
+        users[f'{chat_id}']['is_input'] = False
+    else:
+        edit_message_caption(update, context, 'Выберите нужный вам автобус')
+        edit_message_reply_markup(update, context, markup)
 
 
-def stop_by_input(update, context):
+def stop_input(update, context):
     """Choose station by inputing id."""
     chat_id = update.effective_chat.id
+    message = update.message.text
     if users[f'{chat_id}']['action'] == 'choose_way':
         try:
-            id = int(update.message.text)
+            id = int(message)
             users[f'{chat_id}']['stop'] = id
         except ValueError:
             pass
     delete_message(update, context, update.message.message_id)
+    users[f'{chat_id}']['is_input'] = True
+    users[f'{chat_id}']['way'] = 'input'
     send_buses(update, context)
 
 
@@ -181,13 +226,15 @@ def send_bus_data(update, context):
     bus_id = users[f'{chat_id}']['bus']
     stop_id = users[f'{chat_id}']['stop']
     params = {
-        'bus': users[f'{chat_id}']['bus'],
-        'stop': users[f'{chat_id}']['stop']}
+        'bus': bus_id,
+        'stop': stop_id}
     data = requests.get(LOCATION_DISTANCE_URL, params=params).json()
+    bus = requests.get(BUSES_URL + f'{bus_id}/').json()
+    stop = requests.get(STOP_URL + f'{stop_id}/').json()
     distance = data['distance']
-    message = ('Остановка(id): (name)\nАвтобус:'
-               f'(name)\nРастояние: {distance}м'
-               '\nВремя прибытия: 2мин')
+    message = (f'Остановка ({stop["id"]}): {stop["name"]}\nАвтобус:'
+               f' {bus["name"]}\nРастояние: {distance}м'
+               f'\nВремя прибытия: {round(distance/400)}мин')
     edit_message_caption(update, context, message)
     edit_message_reply_markup(update, context, markup)
 
@@ -198,7 +245,9 @@ def back(update, context):
     action = users[f'{chat_id}']['action']
     if action == 'get_location':
         send_buses(update, context)
-    elif action == 'choose_buses':
+    elif action == 'choose_buses' and users[f'{chat_id}']['way'] == 'input':
+        send_stop_decisions(update, context)
+    elif action == 'choose_buses' and users[f'{chat_id}']['way'] == 'near':
         send_near_stations(update, context)
     elif action == 'choose_stop':
         send_stop_decisions(update, context)
@@ -229,14 +278,16 @@ def main():
         updater.dispatcher.add_handler(
             CommandHandler('start', start))
         updater.dispatcher.add_handler(
-            CallbackQueryHandler(send_near_stations,
-                                 pattern='send_near_stations'))
-        updater.dispatcher.add_handler(
             CallbackQueryHandler(back, pattern='back'))
+        updater.dispatcher.add_handler(
+            CallbackQueryHandler(send_near_stations, pattern='choose')
+        )
         updater.dispatcher.add_handler(
             CallbackQueryHandler(undefined_button_click))
         updater.dispatcher.add_handler(
-            MessageHandler(Filters.text, stop_by_input))
+            MessageHandler(Filters.location, station_by_location))
+        updater.dispatcher.add_handler(
+            MessageHandler(Filters.text, stop_input))
     except Exception:
         logger.exception('Неизвестная ошибка.')
     updater.start_polling()
